@@ -1,0 +1,24 @@
+# Expo generated native projects (rebuilt by CI via expo prebuild)
+mobile/ios/
+mobile/android/
+
+# Dependencies
+mobile/node_modules/
+
+# Expo
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/expo-env.d.ts
+
+# Build artifacts
+mobile/ios/build/
+*.ipa
+
+# Secrets
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db

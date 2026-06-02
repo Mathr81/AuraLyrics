@@ -1,0 +1,103 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_ios:
+        description: 'Build iOS IPA'
+        type: boolean
+        default: true
+
+jobs:
+  build_ios:
+    runs-on: macos-latest
+    if: ${{ inputs.build_ios }}
+
+    steps:
+      - name: ⬇️ • Checkout
+        uses: actions/checkout@v4
+
+      - name: 📀 • Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 💾 • Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: mobile/node_modules
+          key: node-modules-${{ hashFiles('mobile/package-lock.json') }}
+          restore-keys: |
+            node-modules-
+
+      - name: 🗂️ • Install dependencies
+        run: npm install --legacy-peer-deps
+        working-directory: mobile
+
+      - name: 🔨 • Expo Prebuild iOS
+        run: npx expo prebuild -p ios --clean --no-install
+        working-directory: mobile
+        env:
+          CI: '1'
+
+      - name: 💾 • Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            mobile/ios/Pods
+            ~/.cocoapods
+          key: pods-${{ hashFiles('mobile/ios/Podfile') }}
+          restore-keys: |
+            pods-
+
+      - name: 🍫 • Install CocoaPods
+        run: pod install
+        working-directory: mobile/ios
+
+      - name: 💎 • Install xcpretty
+        run: gem install xcpretty --no-document
+
+      - name: 🏗️ • Build iOS (unsigned)
+        run: |
+          WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1 | xargs basename)
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "→ Workspace : $WORKSPACE"
+          echo "→ Scheme    : $SCHEME"
+
+          set -o pipefail
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -derivedDataPath ./build \
+            IPHONEOS_DEPLOYMENT_TARGET=15.1 \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+          | xcpretty --color
+        working-directory: mobile/ios
+
+      - name: 📦 • Bundle IPA
+        run: |
+          WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1 | xargs basename)
+          APP_NAME="${WORKSPACE%.xcworkspace}"
+          APP_PATH="build/Build/Products/Release-iphoneos/${APP_NAME}.app"
+
+          echo "→ Packaging $APP_NAME.app → $APP_NAME.ipa"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -r "${APP_NAME}.ipa" Payload
+          mv "${APP_NAME}.ipa" "build/${APP_NAME}.ipa"
+          rm -rf Payload
+          echo "✅ IPA created at mobile/ios/build/${APP_NAME}.ipa"
+        working-directory: mobile/ios
+
+      - name: 🌍 • Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraLyrics-IPA
+          path: mobile/ios/build/*.ipa
+          if-no-files-found: error
+          retention-days: 30
