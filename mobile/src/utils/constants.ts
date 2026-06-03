@@ -1,5 +1,14 @@
-export const SPOTIFY_CLIENT_ID = "46d320ac2a84489db4c60630bf7418aa"; // à remplir depuis le Spotify Developer Dashboard
+export const SPOTIFY_CLIENT_ID = "46d320ac2a84489db4c60630bf7418aa";
 export const SPOTIFY_REDIRECT_URI = "auralyrics://auth/callback";
+
+// Token interne Spotify — récupéré depuis Spicetify DevTools (dure ~1h)
+// 1. Ouvre Spotify desktop avec Spicetify
+// 2. Ctrl+Shift+I → Console
+// 3. Tape : Spicetify.Platform.Session.accessToken
+// 4. Colle la valeur ci-dessous
+// Si les paroles reviennent en "Static", le token a expiré → renouvelle-le
+export const SPOTIFY_INTERNAL_TOKEN =
+  "BQAfHTJF2Aj1ReHMNvkUImedtERCSMDHJ14gDtr0W2ONFz7l-cIL9kGTsMRVRQZnd0PRu9RT-ThazmQy_yn0o1fPX1CFmVsSw9a5DvEBhviPQohNiLrAcWO-914WIhlmdoJvT0zzrPkcVljgG67dd4NLE92qa9gvIRUz9TzV0uPFnruOaTZw3W2gfhB22UqHtjzeBT1v4FFu0-U0KbiYxlmGazIbq4-Gfur-h9YpHnrXOovcGpKCT3kxRAecf7BemwGtFFmmLeQ4NhXO-B-4pMhjn-jHLwj4Eu1jpJrecjnzXtKMEL1rh6Ga8k7eLWYzALoVOkOBXVBjQlm267xlS_RT--gCPkiuGwlU5O118bEv6HNTKFxVlnj8SKG_y_vmB39X9pe9AQApN2z1MT9YDoJ7D4fUmGPER1Vf_bNLBVzwBXM-u4Aovr_M7ftcM948tBwPqfbjlWJFAl1WC-rDHU6gXiHUSJkf6o3778FZ6qJ256N8v5uoPjA";
 export const SPOTIFY_SCOPES = [
   "user-read-playback-state",
   "user-modify-playback-state",

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import type { LyricsData, LyricsLine, LineState } from '../types/lyrics';
 
 export interface SyncedLine extends LyricsLine {
@@ -6,40 +6,68 @@ export interface SyncedLine extends LyricsLine {
   state: LineState;
 }
 
+function getLineTiming(line: LyricsLine): { start: number; end: number } {
+  const rawLead = (line as any).Lead;
+  const syls = Array.isArray(rawLead) ? rawLead : rawLead?.Syllables;
+  return {
+    start: line.StartTime ?? syls?.[0]?.StartTime ?? 0,
+    end:   line.EndTime   ?? syls?.[syls.length - 1]?.EndTime ?? 0,
+  };
+}
+
 export function useLyricsSync(
   lyrics: LyricsData | null,
   progressMs: number,
 ): { lines: SyncedLine[]; activeIndex: number } {
-  return useMemo(() => {
-    if (!lyrics || lyrics.Type === 'Static') {
-      const lines: SyncedLine[] = (lyrics?.Content ?? []).map((l, i) => ({
-        ...l,
-        index: i,
-        state: 'Active' as LineState,
-      }));
-      return { lines, activeIndex: -1 };
+  // Cache line objects so memo in LyricsLine can skip unchanged items
+  const cache      = useRef<Record<number, SyncedLine>>({});
+  const prevActive = useRef(-1);
+
+  // O(n) scan every 100ms — no allocations, very fast
+  const activeIndex = useMemo(() => {
+    if (!lyrics || lyrics.Type === 'Static') return -1;
+    const prog = progressMs / 1000;
+    for (let i = 0; i < lyrics.Content.length; i++) {
+      const { start, end } = getLineTiming(lyrics.Content[i]);
+      if (end > 0 && prog >= start && prog < end) return i;
+    }
+    return -1;
+  }, [lyrics, progressMs]);
+
+  // Track highest active index for Sung state during inter-line gaps
+  if (activeIndex >= 0) prevActive.current = activeIndex;
+
+  // Lines: only recomputes when activeIndex changes (every few seconds, not 100ms!)
+  // Returns stable (cached) objects for lines whose state didn't change → LyricsLine memo works
+  const lines = useMemo(() => {
+    if (!lyrics) return [];
+
+    if (lyrics.Type === 'Static') {
+      cache.current = {};
+      return lyrics.Content.map((l, i) => {
+        const line = { ...l, index: i, state: 'Active' as LineState };
+        cache.current[i] = line;
+        return line;
+      });
     }
 
-    const progressSec = progressMs / 1000;
-    let activeIndex = -1;
+    const sungBoundary = activeIndex >= 0 ? activeIndex - 1 : prevActive.current;
 
-    const lines: SyncedLine[] = lyrics.Content.map((line, i) => {
-      const start = line.StartTime ?? 0;
-      const end = line.EndTime ?? 0;
+    return lyrics.Content.map((line, i) => {
+      const newState: LineState =
+        i === activeIndex  ? 'Active'  :
+        i <= sungBoundary  ? 'Sung'    :
+        'NotSung';
 
-      let state: LineState;
-      if (progressSec >= start && progressSec < end) {
-        state = 'Active';
-        activeIndex = i;
-      } else if (progressSec >= end) {
-        state = 'Sung';
-      } else {
-        state = 'NotSung';
-      }
+      // Return same object if state unchanged → LyricsLine memo skips re-render
+      const cached = cache.current[i];
+      if (cached && cached.state === newState) return cached;
 
-      return { ...line, index: i, state };
+      const newLine: SyncedLine = { ...line, index: i, state: newState };
+      cache.current[i] = newLine;
+      return newLine;
     });
+  }, [lyrics, activeIndex]); // ← progressMs removed! runs only at line boundaries
 
-    return { lines, activeIndex };
-  }, [lyrics, progressMs]);
+  return { lines, activeIndex };
 }

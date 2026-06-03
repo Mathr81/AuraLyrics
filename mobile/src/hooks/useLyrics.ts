@@ -12,7 +12,7 @@ interface CacheEntry {
 }
 
 function cacheKey(trackId: string) {
-  return `lyrics_v1_${trackId}`;
+  return `lyrics_v3_${trackId}`;  // v3: StartTime/EndTime derived from syllables
 }
 
 export function useLyrics(
@@ -70,12 +70,15 @@ export function useLyrics(
         const entry: CacheEntry = { data, cachedAt: Date.now() };
         await AsyncStorage.setItem(cacheKey(trackId), JSON.stringify(entry));
         if (data) {
+          console.log('[Lyrics] Loaded:', data.Type, data.Content.length, 'lines');
           setLyrics(data);
           setStatus('ready');
         } else {
+          console.log('[Lyrics] No lyrics for track', trackId);
           setStatus('no-lyrics');
         }
-      } catch {
+      } catch (e) {
+        console.error('[Lyrics] Fetch error:', e);
         if (!cancelled) setStatus('error');
       }
     })();

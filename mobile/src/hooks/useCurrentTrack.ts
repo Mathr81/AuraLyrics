@@ -3,16 +3,17 @@ import { getPlaybackState } from '../services/spotify';
 import type { SpotifyPlaybackState } from '../types/spotify';
 import { PLAYBACK_POLL_INTERVAL_MS } from '../utils/constants';
 
-export function useCurrentTrack(getValidToken: () => Promise<string | null>) {
-  const [playback, setPlayback] = useState<SpotifyPlaybackState | null>(null);
-  const [progressMs, setProgressMs] = useState(0);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const rafRef = useRef<number | null>(null);
+// Progress interpolation interval — 100ms is enough precision for lyric sync
+// (avoids requestAnimationFrame which Reanimated intercepts and causes Worklets warnings)
+const PROGRESS_TICK_MS = 100;
 
-  // Last known timestamp from the API for local interpolation
-  const lastApiProgressRef = useRef(0);
+export function useCurrentTrack(getValidToken: () => Promise<string | null>) {
+  const [playback, setPlayback]   = useState<SpotifyPlaybackState | null>(null);
+  const [progressMs, setProgressMs] = useState(0);
+
+  const lastApiProgressRef  = useRef(0);
   const lastApiTimestampRef = useRef(0);
-  const isPlayingRef = useRef(false);
+  const isPlayingRef        = useRef(false);
 
   const poll = useCallback(async () => {
     const token = await getValidToken();
@@ -21,33 +22,30 @@ export function useCurrentTrack(getValidToken: () => Promise<string | null>) {
       const state = await getPlaybackState(token);
       if (!state) return;
       setPlayback(state);
-      lastApiProgressRef.current = state.progress_ms;
+      lastApiProgressRef.current  = state.progress_ms;
       lastApiTimestampRef.current = Date.now();
-      isPlayingRef.current = state.is_playing;
+      isPlayingRef.current        = state.is_playing;
     } catch {
       // network error — keep last known state
     }
   }, [getValidToken]);
 
-  // Interpolate progress at 60fps between API polls
-  const animateProgress = useCallback(() => {
-    if (isPlayingRef.current) {
-      const elapsed = Date.now() - lastApiTimestampRef.current;
-      setProgressMs(lastApiProgressRef.current + elapsed);
-    }
-    rafRef.current = requestAnimationFrame(animateProgress);
-  }, []);
-
   useEffect(() => {
     poll();
-    pollRef.current = setInterval(poll, PLAYBACK_POLL_INTERVAL_MS);
-    rafRef.current = requestAnimationFrame(animateProgress);
+    const apiInterval = setInterval(poll, PLAYBACK_POLL_INTERVAL_MS);
+
+    // Interpolate progress between API polls at 100ms (10fps — enough for lyric sync)
+    const progressInterval = setInterval(() => {
+      if (!isPlayingRef.current) return;
+      const elapsed = Date.now() - lastApiTimestampRef.current;
+      setProgressMs(lastApiProgressRef.current + elapsed);
+    }, PROGRESS_TICK_MS);
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      clearInterval(apiInterval);
+      clearInterval(progressInterval);
     };
-  }, [poll, animateProgress]);
+  }, [poll]);
 
   return { playback, progressMs };
 }

@@ -21,66 +21,63 @@ function formatMs(ms: number): string {
 }
 
 export function ProgressBar({ progressMs, durationMs, onSeek }: Props) {
-  const barWidth = useRef(0);
+  const barWidth   = useRef(0);
   const isDragging = useSharedValue(false);
-  const dragPosition = useSharedValue(0);
+  const dragPos    = useSharedValue(0);
 
   const fraction = durationMs > 0 ? Math.min(1, progressMs / durationMs) : 0;
-  const displayFraction = isDragging.value ? dragPosition.value : fraction;
 
   const trackFill = useAnimatedStyle(() => ({
-    width: `${(isDragging.value ? dragPosition.value : fraction) * 100}%`,
+    width: `${(isDragging.value ? dragPos.value : fraction) * 100}%`,
+  }));
+
+  const thumbPos = useAnimatedStyle(() => ({
+    left: `${(isDragging.value ? dragPos.value : fraction) * 100}%`,
   }));
 
   const doSeek = useCallback(
     (x: number) => {
       if (barWidth.current <= 0) return;
-      const ratio = Math.max(0, Math.min(1, x / barWidth.current));
-      onSeek(ratio * durationMs);
+      onSeek(Math.max(0, Math.min(1, x / barWidth.current)) * durationMs);
     },
     [durationMs, onSeek],
   );
 
-  const panGesture = Gesture.Pan()
+  const pan = Gesture.Pan()
     .onBegin((e) => {
       isDragging.value = true;
-      dragPosition.value = Math.max(0, Math.min(1, e.x / barWidth.current));
+      dragPos.value = Math.max(0, Math.min(1, e.x / barWidth.current));
     })
     .onUpdate((e) => {
-      dragPosition.value = Math.max(0, Math.min(1, e.x / barWidth.current));
+      dragPos.value = Math.max(0, Math.min(1, e.x / barWidth.current));
     })
     .onEnd((e) => {
       isDragging.value = false;
       runOnJS(doSeek)(e.x);
     });
 
-  const tapGesture = Gesture.Tap().onEnd((e) => {
+  const tap = Gesture.Tap().onEnd((e) => {
     runOnJS(doSeek)(e.x);
   });
 
-  const gesture = Gesture.Simultaneous(panGesture, tapGesture);
-
   return (
     <View style={styles.container}>
-      <GestureDetector gesture={gesture}>
+      <GestureDetector gesture={Gesture.Simultaneous(pan, tap)}>
         <View
           style={styles.trackOuter}
           onLayout={(e) => { barWidth.current = e.nativeEvent.layout.width; }}
-          hitSlop={{ top: 12, bottom: 12 }}
+          hitSlop={{ top: 14, bottom: 14 }}
         >
+          {/* Extension: RemainingColor = rgba(255,255,255,0.18) */}
           <View style={styles.trackBg} />
+          {/* Extension: TraveledColor = #fff (accent) */}
           <Animated.View style={[styles.trackFill, trackFill]} />
-          {/* Thumb dot */}
-          <Animated.View
-            style={[
-              styles.thumb,
-              useAnimatedStyle(() => ({
-                left: `${(isDragging.value ? dragPosition.value : fraction) * 100}%`,
-              })),
-            ]}
-          />
+          {/* Extension: thumb 185cqh circle — using fixed 13px */}
+          <Animated.View style={[styles.thumb, thumbPos]} />
         </View>
       </GestureDetector>
+
+      {/* Times */}
       <View style={styles.times}>
         <Text style={styles.time}>{formatMs(progressMs)}</Text>
         <Text style={styles.time}>{formatMs(durationMs)}</Text>
@@ -90,20 +87,53 @@ export function ProgressBar({ progressMs, durationMs, onSeek }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { width: '100%', gap: 6 },
-  trackOuter: { height: 3, width: '100%', position: 'relative', justifyContent: 'center' },
-  trackBg: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2 },
-  trackFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: '#fff', borderRadius: 2 },
+  container: { width: '100%', gap: 5 },
+
+  // Extension: height 1.3cqh, border-radius 100cqw (pill)
+  trackOuter: {
+    height: 4,
+    width: '100%',
+    position: 'relative',
+    justifyContent: 'center',
+  },
+
+  trackBg: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 999,
+  },
+
+  trackFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: '#fff',
+    borderRadius: 999,
+  },
+
   thumb: {
     position: 'absolute',
     top: '50%',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 13,
+    height: 13,
+    borderRadius: 999,
     backgroundColor: '#fff',
-    marginLeft: -6,
-    marginTop: -6,
+    marginLeft: -6.5,
+    marginTop: -6.5,
+    // Extension: thumb shadow
+    shadowColor: '#000',
+    shadowRadius: 4,
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 1 },
   },
+
   times: { flexDirection: 'row', justifyContent: 'space-between' },
-  time: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '500' },
+
+  // Extension: color text-secondary, ~11px
+  time: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '500',
+  },
 });

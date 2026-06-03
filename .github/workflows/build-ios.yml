@@ -1,25 +1,32 @@
-name: Build iOS IPA
+name: Build
 
 on:
   workflow_dispatch:
     inputs:
-      configuration:
-        description: 'Build configuration'
+      platform:
+        description: 'Platform'
         type: choice
-        options:
-          - Debug
-          - Release
+        options: [ios, android, both]
+        default: ios
+      configuration:
+        description: 'Configuration (iOS) / Variant (Android)'
+        type: choice
+        options: [Debug, Release]
         default: Debug
 
+# ─────────────────────────────────────────────────────────────────────────────
+# iOS
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   build_ios:
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'both' }}
     runs-on: macos-latest
 
     steps:
       - name: ⬇️ • Checkout
         uses: actions/checkout@v4
 
-      - name: 📀 • Setup Node.js 20
+      - name: 📀 • Setup Node 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -28,19 +35,43 @@ jobs:
         uses: actions/cache@v4
         with:
           path: mobile/node_modules
-          key: node-modules-${{ hashFiles('mobile/package-lock.json') }}
-          restore-keys: |
-            node-modules-
+          key: node-ios-${{ hashFiles('mobile/package-lock.json') }}
+          restore-keys: node-ios-
 
       - name: 🗂️ • Install dependencies
         run: npm install --legacy-peer-deps
         working-directory: mobile
 
-      - name: 🔨 • Expo Prebuild iOS
+      - name: 🔨 • Expo Prebuild (iOS)
         run: npx expo prebuild -p ios --clean --no-install
         working-directory: mobile
         env:
           CI: '1'
+
+      - name: 🔧 • Patch Podfile — fix ExpoModulesJSI xcframework in CI
+        working-directory: mobile/ios
+        run: |
+          ruby - << 'RUBY'
+          content = File.read('Podfile')
+          ci_patch = %q(
+            # CI: disable code-signing & sandboxing for all pods (fixes ExpoModulesJSI xcframework)
+            installer.pods_project.targets.each do |t|
+              t.build_configurations.each do |c|
+                c.build_settings['CODE_SIGNING_ALLOWED']            = 'NO'
+                c.build_settings['CODE_SIGNING_REQUIRED']           = 'NO'
+                c.build_settings['CODE_SIGN_IDENTITY']              = ''
+                c.build_settings['ENABLE_USER_SCRIPT_SANDBOXING']   = 'NO'
+              end
+            end
+          )
+          if content.include?('post_install do |installer|')
+            content.sub!('post_install do |installer|', "post_install do |installer|\n#{ci_patch}")
+          else
+            content += "\npost_install do |installer|\n#{ci_patch}\nend\n"
+          end
+          File.write('Podfile', content)
+          puts "✅ Podfile patched"
+          RUBY
 
       - name: 💾 • Cache CocoaPods
         uses: actions/cache@v4
@@ -48,11 +79,10 @@ jobs:
           path: |
             mobile/ios/Pods
             ~/.cocoapods
-          key: pods-${{ hashFiles('mobile/ios/Podfile') }}
-          restore-keys: |
-            pods-
+          key: pods-ios-${{ hashFiles('mobile/ios/Podfile') }}
+          restore-keys: pods-ios-
 
-      - name: 🍫 • Install CocoaPods
+      - name: 🍫 • Pod install
         run: pod install
         working-directory: mobile/ios
 
@@ -60,6 +90,13 @@ jobs:
         run: gem install xcpretty --no-document
 
       - name: 🏗️ • Build iOS (unsigned)
+        working-directory: mobile/ios
+        # Export signing vars so child xcodebuild calls (xcframework scripts) inherit them
+        env:
+          CODE_SIGNING_ALLOWED: 'NO'
+          CODE_SIGNING_REQUIRED: 'NO'
+          CODE_SIGN_IDENTITY: ''
+          ENABLE_USER_SCRIPT_SANDBOXING: 'NO'
         run: |
           WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1 | xargs basename)
           SCHEME="${WORKSPACE%.xcworkspace}"
@@ -73,17 +110,19 @@ jobs:
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration "$CONFIG" \
-            -destination generic/platform=iOS \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath ./build \
             IPHONEOS_DEPLOYMENT_TARGET=15.1 \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
           | xcpretty --color
-        working-directory: mobile/ios
 
       - name: 📦 • Bundle IPA
+        working-directory: mobile/ios
         run: |
           WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1 | xargs basename)
           APP_NAME="${WORKSPACE%.xcworkspace}"
@@ -96,13 +135,89 @@ jobs:
           zip -r "${APP_NAME}.ipa" Payload
           mv "${APP_NAME}.ipa" "build/${APP_NAME}.ipa"
           rm -rf Payload
-          echo "✅ IPA created at mobile/ios/build/${APP_NAME}.ipa"
-        working-directory: mobile/ios
+          echo "✅ IPA: mobile/ios/build/${APP_NAME}.ipa"
 
-      - name: 🌍 • Upload IPA artifact
+      - name: 🌍 • Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: AuraLyrics-${{ github.event.inputs.configuration }}-IPA
+          name: AuraLyrics-iOS-${{ github.event.inputs.configuration }}-IPA
           path: mobile/ios/build/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Android
+# ─────────────────────────────────────────────────────────────────────────────
+  build_android:
+    if: ${{ inputs.platform == 'android' || inputs.platform == 'both' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ • Checkout
+        uses: actions/checkout@v4
+
+      - name: 📀 • Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: ☕ • Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 💾 • Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: mobile/node_modules
+          key: node-android-${{ hashFiles('mobile/package-lock.json') }}
+          restore-keys: node-android-
+
+      - name: 🗂️ • Install dependencies
+        run: npm install --legacy-peer-deps
+        working-directory: mobile
+
+      - name: 🔨 • Expo Prebuild (Android)
+        run: npx expo prebuild -p android --clean --no-install
+        working-directory: mobile
+        env:
+          CI: '1'
+
+      - name: 💾 • Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: 🤖 • Make gradlew executable
+        run: chmod +x ./gradlew
+        working-directory: mobile/android
+
+      - name: 🏗️ • Build Android APK
+        working-directory: mobile/android
+        run: |
+          CONFIG="${{ github.event.inputs.configuration }}"
+          if [ "$CONFIG" = "Release" ]; then
+            ./gradlew assembleRelease --no-daemon
+            echo "APK_PATH=app/build/outputs/apk/release/app-release.apk" >> $GITHUB_ENV
+            echo "APK_NAME=AuraLyrics-release.apk" >> $GITHUB_ENV
+          else
+            ./gradlew assembleDebug --no-daemon
+            echo "APK_PATH=app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_ENV
+            echo "APK_NAME=AuraLyrics-debug.apk" >> $GITHUB_ENV
+          fi
+
+      - name: 📦 • Rename APK
+        run: cp "mobile/android/${{ env.APK_PATH }}" "${{ env.APK_NAME }}"
+
+      - name: 🌍 • Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuraLyrics-Android-${{ github.event.inputs.configuration }}-APK
+          path: ${{ env.APK_NAME }}
           if-no-files-found: error
           retention-days: 30

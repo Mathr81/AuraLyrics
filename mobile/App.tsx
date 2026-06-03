@@ -1,5 +1,7 @@
-import 'react-native-reanimated';
+import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
+configureReanimatedLogger({ level: ReanimatedLogLevel.warn, strict: false });
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useSpotifyAuth } from './src/hooks/useSpotifyAuth';
 import LoginScreen from './src/screens/LoginScreen';
