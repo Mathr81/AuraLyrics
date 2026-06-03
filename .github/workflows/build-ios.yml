@@ -91,6 +91,28 @@ jobs:
         run: pod install
         working-directory: mobile/ios
 
+      - name: 🔨 • Pre-build ExpoModulesJSI xcframework
+        # build-xcframework.sh calls a nested xcodebuild (env -i) to compile the
+        # Swift/JSI xcframework via SPM. When run inside Xcode's sandboxed script
+        # phase that inner xcodebuild sometimes fails (missing env, sandbox
+        # restrictions).  Running it here — before the main build, with full env —
+        # populates the hash-based cache so Xcode's build phase is a no-op skip.
+        working-directory: mobile/ios
+        env:
+          PODS_ROOT: ${{ github.workspace }}/mobile/ios/Pods
+          PLATFORM_NAME: iphoneos
+        run: |
+          EXPO_JSI_DIR="Pods/ExpoModulesJSI"
+          if [ ! -d "$EXPO_JSI_DIR" ]; then
+            echo "⚠️  ExpoModulesJSI pod not found — skipping pre-build"
+            exit 0
+          fi
+          echo "→ PODS_ROOT : $PODS_ROOT"
+          echo "→ PLATFORM  : $PLATFORM_NAME"
+          echo "→ Pre-building ExpoModulesJSI xcframework…"
+          bash "$EXPO_JSI_DIR/scripts/build-xcframework.sh"
+          echo "✅ ExpoModulesJSI xcframework ready"
+
       - name: 💎 • Install xcpretty
         run: gem install xcpretty --no-document
 

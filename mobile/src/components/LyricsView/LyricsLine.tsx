@@ -1,5 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import MaskedView from '@react-native-masked-view/masked-view';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -29,6 +31,17 @@ const SCALE_ACTIVE     = 1.05;
 const SCALE_EASING     = Easing.bezier(0.37, 0, 0.63, 1);
 const TRANSITION_MS    = 400;
 
+// Extension gradient for Line mode (same as LyricsWord gradient):
+// 180deg top→bottom, BRIGHT top half → DIM bottom half
+// animated translateY from -H (dim) to 0 (bright) as lineFillSV 0→1
+const LINE_GRAD_COLORS: [string, string, string, string] = [
+  'rgba(255,255,255,0.90)',
+  'rgba(255,255,255,0.90)',
+  'rgba(255,255,255,0.35)',
+  'rgba(255,255,255,0.35)',
+];
+const LINE_GRAD_LOCS: [number, number, number, number] = [0, 0.48, 0.52, 1];
+
 export const LINE_MARGIN_V = 2;
 
 function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceFromActive }: Props) {
@@ -37,10 +50,13 @@ function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceF
   const dotHeight  = useSharedValue(0);
   const barOpacity = useSharedValue(0);
   const barScaleY  = useSharedValue(0);
+  // Line mode: gradient fill that sweeps from dim to bright as line plays
+  const lineFillSV = useSharedValue(0);
 
   const isActive = line.state === 'Active';
+  const LINE_H   = fontSize * 1.182;
 
-  // Line-level opacity/scale transition (runs once on state change)
+  // Line-level opacity/scale transition
   useEffect(() => {
     if (lyricsType === 'Static') return;
     if (line.state === 'Active') {
@@ -48,22 +64,24 @@ function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceF
       barOpacity.value = withTiming(1, { duration: 200 });
       barScaleY.value  = withSpring(1, { damping: 12, stiffness: 180 });
       if (lyricsType === 'Line') {
-        scale.value = withTiming(SCALE_ACTIVE, { duration: TRANSITION_MS, easing: SCALE_EASING });
+        scale.value      = withTiming(SCALE_ACTIVE, { duration: TRANSITION_MS, easing: SCALE_EASING });
+        lineFillSV.value = 0; // reset fill at start of line
       }
     } else if (line.state === 'Sung') {
       opacity.value    = withTiming(OPACITY_SUNG, { duration: TRANSITION_MS });
       scale.value      = withTiming(1, { duration: TRANSITION_MS, easing: SCALE_EASING });
       barOpacity.value = withTiming(0, { duration: 200 });
       barScaleY.value  = withTiming(0, { duration: 200 });
+      if (lyricsType === 'Line') lineFillSV.value = withTiming(1, { duration: 200 });
     } else {
       opacity.value    = withTiming(OPACITY_NOT_SUNG, { duration: TRANSITION_MS });
       scale.value      = withTiming(1, { duration: TRANSITION_MS, easing: SCALE_EASING });
       barOpacity.value = withTiming(0, { duration: 200 });
       barScaleY.value  = withTiming(0, { duration: 200 });
+      if (lyricsType === 'Line') lineFillSV.value = withTiming(0, { duration: 200 });
     }
   }, [line.state, lyricsType]);
 
-  // Musical-line height animation
   useEffect(() => {
     if (!line.IsDotLine) return;
     const h = line.state === 'Active' ? fontSize * 1.65 : 0;
@@ -77,11 +95,33 @@ function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceF
     opacity:   opacity.value,
     transform: [{ scale: scale.value }],
   }));
-  const dotStyle   = useAnimatedStyle(() => ({ height: dotHeight.value, overflow: 'hidden' as const }));
-  const barStyle   = useAnimatedStyle(() => ({
+  const dotStyle = useAnimatedStyle(() => ({ height: dotHeight.value, overflow: 'hidden' as const }));
+  const barStyle = useAnimatedStyle(() => ({
     opacity:   barOpacity.value,
     transform: [{ scaleY: barScaleY.value }],
   }));
+
+  // Line mode: gradient translateY driven by lineFillSV
+  // translateY = LINE_H * (fill - 1): -LINE_H (dim) → 0 (bright)
+  const lineFillGradStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: LINE_H * (lineFillSV.value - 1) }],
+  }));
+
+  // Line mode gradient: continuous fill driven by progressShared on UI thread
+  const lineStart = line.StartTime ?? 0;
+  const lineEnd   = line.EndTime   ?? 0;
+  useAnimatedReaction(
+    () => {
+      if (lyricsType !== 'Line' || !isActive || lineEnd <= lineStart) return -1;
+      const v = (progressShared.value - lineStart) / (lineEnd - lineStart);
+      return Math.max(0, Math.min(1, v));
+    },
+    (cur, prev) => {
+      'worklet';
+      if (cur >= 0 && cur !== prev) lineFillSV.value = cur;
+    },
+    [lyricsType, isActive, lineStart, lineEnd],
+  );
 
   // ── Syllable refs for imperative animation ─────────────────────────────────
   const syllables = useMemo(() => {
@@ -93,7 +133,6 @@ function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceF
 
   const wordRefs = useRef<(LyricsWordRef | null)[]>([]);
 
-  // Memoize syllable timings as plain numbers for the worklet closure
   const sylTimings = useMemo(
     () => (syllables ?? []).map((s: any) => ({
       s: s.StartTime ?? s.startTime ?? 0,
@@ -102,29 +141,30 @@ function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceF
     [syllables],
   );
 
-  // Imperative handler called from UI thread via runOnJS
   const handleSylChange = useCallback((newIdx: number, prevIdx: number) => {
-    const refs = wordRefs.current;
-    const n    = refs.length;
+    const refs  = wordRefs.current;
+    const n     = refs.length;
+    // Pass syllable duration so LyricsWord can animate the gradient fill correctly
+    const durMs = newIdx < sylTimings.length
+      ? Math.max(50, (sylTimings[newIdx].e - sylTimings[newIdx].s) * 1000)
+      : 200;
     for (let i = 0; i < n; i++) {
       const skipped = i === newIdx && prevIdx !== -1 && i > prevIdx + 1;
       if (i < newIdx)        refs[i]?.setSung();
-      else if (i === newIdx) refs[i]?.setActive(skipped);
+      else if (i === newIdx) refs[i]?.setActive(skipped, durMs);
       else                   refs[i]?.setNotYet();
     }
-  }, []);
+  }, [sylTimings]);
 
-  // ONE reaction per active Syllable line — runs on UI thread at 60fps
-  // but the callback (runOnJS) only fires when the active syllable index changes (~5-10×/s)
   useAnimatedReaction(
     () => {
       if (lyricsType !== 'Syllable' || !isActive) return -1;
       const prog = progressShared.value;
-      const t = sylTimings; // captured by closure — small array of {s,e}
+      const t = sylTimings;
       for (let j = 0; j < t.length; j++) {
         if (prog >= t[j].s && prog < t[j].e) return j;
       }
-      return t.length; // past all syllables
+      return t.length;
     },
     (cur, prev) => {
       'worklet';
@@ -165,7 +205,6 @@ function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceF
 
   // ── Syllable ───────────────────────────────────────────────────────────────
   if (lyricsType === 'Syllable' && syllables && syllables.length > 0) {
-    // Ensure refs array matches syllable count
     if (wordRefs.current.length !== syllables.length) {
       wordRefs.current = new Array(syllables.length).fill(null);
     }
@@ -189,16 +228,48 @@ function LyricsLineInner({ line, fontSize, progressShared, lyricsType, distanceF
   }
 
   // ── Line ──────────────────────────────────────────────────────────────────
+  // Active line: MaskedView with animated gradient fill (top→bottom, dim→bright)
+  // matching the extension's --gradient-position animation (0% → 100%)
+  if (isActive) {
+    return (
+      <View style={[styles.outer, styles.lineRow, isOpp ? styles.rightAligned : styles.leftAligned]}>
+        <Animated.View style={[styles.activeBar, barStyle]} />
+        <Animated.View style={[styles.lineContent, contentStyle]}>
+          <MaskedView
+            style={{ flex: 1, height: LINE_H }}
+            maskElement={
+              <Text style={[styles.lineText, { fontSize, lineHeight: LINE_H }]}>
+                {line.Text ?? ''}
+              </Text>
+            }
+          >
+            <Animated.View
+              style={[
+                { width: '100%', height: LINE_H * 2, position: 'absolute', top: 0 },
+                lineFillGradStyle,
+              ]}
+            >
+              <LinearGradient
+                colors={LINE_GRAD_COLORS}
+                locations={LINE_GRAD_LOCS}
+                style={StyleSheet.absoluteFill}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+              />
+            </Animated.View>
+          </MaskedView>
+        </Animated.View>
+      </View>
+    );
+  }
+
+  // Non-active line: plain text (no MaskedView overhead)
   return (
     <View style={[styles.outer, styles.lineRow, isOpp ? styles.rightAligned : styles.leftAligned]}>
       <Animated.View style={[styles.activeBar, barStyle]} />
       <Animated.View style={[styles.lineContent, contentStyle]}>
         <Animated.Text
-          style={[
-            styles.lineText,
-            { fontSize, lineHeight: fontSize * 1.182 },
-            isActive && styles.activeGlow,
-          ]}
+          style={[styles.lineText, { fontSize, lineHeight: LINE_H }]}
         >
           {line.Text ?? ''}
         </Animated.Text>
@@ -211,7 +282,7 @@ export const LyricsLine = memo(LyricsLineInner);
 
 const styles = StyleSheet.create({
   outer: {
-    marginVertical:  LINE_MARGIN_V,
+    marginVertical:    LINE_MARGIN_V,
     paddingHorizontal: 2,
   },
   lineRow: {
@@ -221,11 +292,6 @@ const styles = StyleSheet.create({
   lineContent: { flex: 1 },
   lineText:    { fontWeight: '700', color: '#fff' },
   staticText:  { fontWeight: '500', color: 'rgba(255,255,255,0.92)', alignSelf: 'flex-start' },
-  activeGlow: {
-    textShadowColor:  'rgba(255,255,255,0.4)',
-    textShadowRadius: 14,
-    textShadowOffset: { width: 0, height: 0 },
-  },
   wordRow: {
     flexDirection: 'row',
     flexWrap:      'wrap',

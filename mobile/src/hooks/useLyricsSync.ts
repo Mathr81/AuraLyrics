@@ -22,6 +22,11 @@ export function useLyricsSync(
   // Cache line objects so memo in LyricsLine can skip unchanged items
   const cache      = useRef<Record<number, SyncedLine>>({});
   const prevActive = useRef(-1);
+  // Track lyrics object identity — clear stale cache on track change.
+  // Without this, changing tracks returns old SyncedLine objects (with old text)
+  // for lines whose state happens to match (both NotSung), causing the previous
+  // track's lyrics to linger until each line becomes active.
+  const lyricsIdRef = useRef<LyricsData | null>(null);
 
   // O(n) scan every 100ms — no allocations, very fast
   const activeIndex = useMemo(() => {
@@ -40,10 +45,17 @@ export function useLyricsSync(
   // Lines: only recomputes when activeIndex changes (every few seconds, not 100ms!)
   // Returns stable (cached) objects for lines whose state didn't change → LyricsLine memo works
   const lines = useMemo(() => {
-    if (!lyrics) return [];
+    if (!lyrics) {
+      cache.current = {};
+      return [];
+    }
+
+    if (lyricsIdRef.current !== lyrics) {
+      lyricsIdRef.current = lyrics;
+      cache.current = {};
+    }
 
     if (lyrics.Type === 'Static') {
-      cache.current = {};
       return lyrics.Content.map((l, i) => {
         const line = { ...l, index: i, state: 'Active' as LineState };
         cache.current[i] = line;
