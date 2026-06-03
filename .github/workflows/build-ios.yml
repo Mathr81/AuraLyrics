@@ -26,10 +26,12 @@ jobs:
       - name: ⬇️ • Checkout
         uses: actions/checkout@v4
 
-      - name: 🛠️ • Set Xcode 16.4
+      - name: 🛠️ • Set Xcode (17+, Swift 6.2 requis par expo-modules-jsi)
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.4'  # Sélectionne spécifiquement Xcode 16.4 stable
+          # expo-modules-jsi@56 utilise swift-tools-version: 6.2 (SPM 6.2 = Xcode 17+).
+          # Xcode 16.x n'a que Swift 6.1 → build SPM échoue avec "tools version mismatch".
+          xcode-version: 'latest-stable'
 
       - name: 📀 • Setup Node 20
         uses: actions/setup-node@v4
@@ -84,8 +86,10 @@ jobs:
           path: |
             mobile/ios/Pods
             ~/.cocoapods
-          key: pods-ios-${{ hashFiles('mobile/ios/Podfile') }}
-          restore-keys: pods-ios-
+          key: pods-ios-${{ hashFiles('mobile/ios/Podfile') }}-xcode-${{ env.MD_APPLE_SDK_ROOT }}
+          restore-keys: |
+            pods-ios-${{ hashFiles('mobile/ios/Podfile') }}-xcode-
+            pods-ios-${{ hashFiles('mobile/ios/Podfile') }}-
 
       - name: 🍫 • Pod install
         run: pod install
