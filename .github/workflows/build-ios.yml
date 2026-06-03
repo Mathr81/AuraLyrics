@@ -112,7 +112,6 @@ jobs:
             -configuration "$CONFIG" \
             -destination 'generic/platform=iOS' \
             -derivedDataPath ./build \
-            IPHONEOS_DEPLOYMENT_TARGET=15.1 \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
