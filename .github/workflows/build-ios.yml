@@ -21,6 +21,8 @@ jobs:
   build_ios:
     if: ${{ inputs.platform == 'ios' || inputs.platform == 'both' }}
     runs-on: macos-15
+    env:
+      EXPO_USE_PRECOMPILED_MODULES: '0'
 
     steps:
       - name: ⬇️ • Checkout
