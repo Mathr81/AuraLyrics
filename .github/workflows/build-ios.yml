@@ -92,25 +92,30 @@ jobs:
         working-directory: mobile/ios
 
       - name: 🔨 • Pre-build ExpoModulesJSI xcframework
-        # build-xcframework.sh calls a nested xcodebuild (env -i) to compile the
-        # Swift/JSI xcframework via SPM. When run inside Xcode's sandboxed script
-        # phase that inner xcodebuild sometimes fails (missing env, sandbox
-        # restrictions).  Running it here — before the main build, with full env —
-        # populates the hash-based cache so Xcode's build phase is a no-op skip.
-        working-directory: mobile/ios
-        env:
-          PODS_ROOT: ${{ github.workspace }}/mobile/ios/Pods
-          PLATFORM_NAME: iphoneos
+        # ExpoModulesJSI is a local pod installed via :path => node_modules/expo-modules-jsi/apple.
+        # CocoaPods does NOT copy source into Pods/ExpoModulesJSI/ — PODS_TARGET_SRCROOT
+        # points directly into node_modules. The build-xcframework.sh script shells out to a
+        # nested `xcodebuild` (via `env -i`) which fails inside Xcode's sandboxed script phase.
+        # Running it here — before the main build, with full env access — pre-builds the
+        # xcframework and records its source hash. Xcode's build phase then finds an up-to-date
+        # hash and skips, making the ExpoModulesJSI phase a no-op.
+        working-directory: mobile
         run: |
-          EXPO_JSI_DIR="Pods/ExpoModulesJSI"
-          if [ ! -d "$EXPO_JSI_DIR" ]; then
-            echo "⚠️  ExpoModulesJSI pod not found — skipping pre-build"
+          EXPO_JSI_SCRIPT="node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh"
+          if [ ! -f "$EXPO_JSI_SCRIPT" ]; then
+            echo "⚠️  expo-modules-jsi not in node_modules — skipping pre-build"
             exit 0
           fi
-          echo "→ PODS_ROOT : $PODS_ROOT"
-          echo "→ PLATFORM  : $PLATFORM_NAME"
+          # Resolve absolute paths with symlink expansion (cd && pwd) so the source hash
+          # recorded here matches what Xcode's build phase computes from PODS_ROOT / REACT_NATIVE_PATH.
+          export PODS_ROOT="$(cd "ios/Pods" && pwd)"
+          export PLATFORM_NAME="iphoneos"
+          export REACT_NATIVE_PATH="$(cd "node_modules/react-native" && pwd)"
+          echo "→ PODS_ROOT         : $PODS_ROOT"
+          echo "→ PLATFORM_NAME     : $PLATFORM_NAME"
+          echo "→ REACT_NATIVE_PATH : $REACT_NATIVE_PATH"
           echo "→ Pre-building ExpoModulesJSI xcframework…"
-          bash "$EXPO_JSI_DIR/scripts/build-xcframework.sh"
+          bash "$EXPO_JSI_SCRIPT"
           echo "✅ ExpoModulesJSI xcframework ready"
 
       - name: 💎 • Install xcpretty
